@@ -37,10 +37,10 @@ class RemoveStrings(transforms.DataTransformFn):
 def create_torch_dataloader(
     data_config: DataConfig,
     action_horizon: int,
-    batch_size: int,
+    batch_size: int = 128,
     model_config: _model.BaseModelConfig,
-    num_workers: int,
-    max_frames: int | None = None,
+    num_workers: int = 8,
+    max_frames: int = 100000,
 ) -> tuple[_data_loader.TorchDataLoader, int]:
     if data_config.repo_id is None:
         raise ValueError("Data config must have a repo_id")

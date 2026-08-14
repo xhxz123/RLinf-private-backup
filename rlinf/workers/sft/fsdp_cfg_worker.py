@@ -21,6 +21,7 @@ CfgMixtureDataset for weighted sampling across datasets.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -342,7 +343,8 @@ class FSDPCfgWorker(FSDPSftWorker):
             if self.cfg.actor.get("enable_offload", False):
                 with self.device_lock:
                     self.load_param_and_grad(self.device)
-                    self.load_optimizer(self.device)
+                    # NOTE: optimizer states stay on CPU to save GPU memory.
+                    # The optimizer step is done on CPU after offloading params + grads.
 
             self.model.train()
             if hasattr(self.model, "gradient_checkpointing_disable"):
@@ -362,6 +364,21 @@ class FSDPCfgWorker(FSDPSftWorker):
 
             metrics = {}
             avg_loss = 0.0
+
+            step = int(getattr(self, "global_step", 0)) + 1
+            max_steps = int(getattr(self.cfg.runner, "max_steps", -1))
+            should_log_step = int(getattr(self, "_rank", 0)) == 0
+
+            if should_log_step:
+                print(
+                    f"[CFGRL][STEP_START] global_step={step}/{max_steps} "
+                    f"grad_accum={self.gradient_accumulation} "
+                    f"micro_bs={self.cfg.actor.micro_batch_size} "
+                    f"global_bs={self.cfg.actor.global_batch_size}",
+                    flush=True,
+                )
+
+            step_t0 = time.perf_counter()
 
             for idx in range(self.gradient_accumulation):
                 backward_ctx = self.before_micro_batch(
@@ -390,7 +407,67 @@ class FSDPCfgWorker(FSDPSftWorker):
                     observation,
                 )
                 actions = actions.to(torch.float32).to(self.device, non_blocking=True)
+
+                target_action_dim = 32
+                if actions.shape[-1] < target_action_dim:
+                    pad = torch.zeros(
+                        *actions.shape[:-1],
+                        target_action_dim - actions.shape[-1],
+                        dtype=actions.dtype,
+                        device=actions.device,
+                    )
+                    actions = torch.cat([actions, pad], dim=-1)
+                elif actions.shape[-1] > target_action_dim:
+                    raise ValueError(
+                        f"Action dim {actions.shape[-1]} exceeds target_action_dim {target_action_dim}"
+                    )
+
                 advantage = advantage.to(self.device, non_blocking=True)
+
+                # if step <= 3 and idx == 0:
+                #     raw_actions = actions.detach().cpu()
+                #     print(
+                #         f"[CFG_DIAG][RAW_ACTION] step={step} "
+                #         f"shape={tuple(raw_actions.shape)} "
+                #         f"min={raw_actions.min().item():.6f} "
+                #         f"max={raw_actions.max().item():.6f} "
+                #         f"mean={raw_actions.mean().item():.6f} "
+                #         f"std={raw_actions.std().item():.6f} "
+                #         f"first={raw_actions.reshape(-1, raw_actions.shape[-1])[0].tolist()}",
+                #         flush=True,
+                #     )
+
+                # actions = actions.to(torch.float32).to(self.device, non_blocking=True)
+
+                # target_action_dim = 32
+                # if actions.shape[-1] < target_action_dim:
+                #     pad = torch.zeros(
+                #         *actions.shape[:-1],
+                #         target_action_dim - actions.shape[-1],
+                #         dtype=actions.dtype,
+                #         device=actions.device,
+                #     )
+                #     actions = torch.cat([actions, pad], dim=-1)
+                # elif actions.shape[-1] > target_action_dim:
+                #     raise ValueError(
+                #         f"Action dim {actions.shape[-1]} exceeds target_action_dim {target_action_dim}"
+                #     )
+
+                # if step <= 3 and idx == 0:
+                #     model_actions = actions.detach().cpu()
+                #     print(
+                #         f"[CFG_DIAG][MODEL_ACTION] step={step} "
+                #         f"shape={tuple(model_actions.shape)} "
+                #         f"min={model_actions.min().item():.6f} "
+                #         f"max={model_actions.max().item():.6f} "
+                #         f"mean={model_actions.mean().item():.6f} "
+                #         f"std={model_actions.std().item():.6f} "
+                #         f"first={model_actions.reshape(-1, model_actions.shape[-1])[0].tolist()}",
+                #         flush=True,
+                #     )
+
+                # advantage = advantage.to(self.device, non_blocking=True)
+
 
                 with self.amp_context:
                     loss, metrics_data = self.model(
@@ -409,6 +486,11 @@ class FSDPCfgWorker(FSDPSftWorker):
 
                 if metrics_data is not None:
                     append_to_dict(metrics, metrics_data)
+
+            # Offload model + grads to CPU before optimizer step to save GPU memory.
+            # Optimizer states are kept on CPU throughout.
+            if self.cfg.actor.get("enable_offload", False):
+                self.offload_param_and_grad(offload_grad=True)
 
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
@@ -542,6 +624,19 @@ class FSDPCfgWorker(FSDPSftWorker):
                 train_metrics = all_reduce_dict(
                     {k: np.mean(v) for k, v in metrics.items()},
                     op=torch.distributed.ReduceOp.AVG,
+                )
+
+            if should_log_step:
+                elapsed = time.perf_counter() - step_t0
+                print(
+                    f"[CFGRL][STEP_END] global_step={step}/{max_steps} "
+                    f"elapsed={elapsed:.2f}s "
+                    f"loss={float(train_metrics.get('loss', float('nan'))):.4f} "
+                    f"lr={float(train_metrics.get('learning_rate', float('nan'))):.6g} "
+                    f"grad_norm={float(train_metrics.get('grad_norm', float('nan'))):.4f} "
+                    f"positive_ratio={float(train_metrics.get('positive_label_ratio', float('nan'))):.4f} "
+                    f"negative_ratio={float(train_metrics.get('negative_label_ratio', float('nan'))):.4f}",
+                    flush=True,
                 )
 
             return train_metrics

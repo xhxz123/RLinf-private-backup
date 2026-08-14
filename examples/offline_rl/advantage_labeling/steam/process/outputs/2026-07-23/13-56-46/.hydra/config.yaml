@@ -1,0 +1,25 @@
+advantage:
+  value_checkpoint: /root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260723-10:24:04/steam_sft/checkpoints/global_step_200/actor
+  batch_size: 128
+  num_dataloader_workers_per_gpu: 12
+  prefetch_factor: 2
+  label_mode: quantile
+  rollout_quantile: 0.3
+  expert_quantile: 0.8
+  tag: steam_k32_ensemble3_ckpt16000_wco_exp_and_rollout
+  model:
+    precision: bf16
+data:
+  k: 32
+  camera_keys:
+  - observation.images.top_head
+  - observation.images.hand_left
+  - observation.images.hand_right
+  train_data_paths:
+  - dataset_path: /root/autodl-tmp/data/sft_data/task_5867
+    type: sft
+  - dataset_path: /root/autodl-tmp/data/rollout_data/task_5867
+    type: rollout
+distributed:
+  backend: nccl
+  timeout: 3600

@@ -33,7 +33,7 @@ fi
 echo "Using Python at $(which python)"
 echo "Config: ${CONFIG_NAME}"
 
-LOG_DIR="${REPO_PATH}/logs/cfg_rl/${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
+LOG_DIR="/root/autodl-tmp/logs/cfg_rl/${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_cfg_rl.log"
 mkdir -p "${LOG_DIR}"
 

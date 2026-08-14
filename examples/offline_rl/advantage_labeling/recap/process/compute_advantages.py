@@ -51,28 +51,125 @@ from lerobot.common.datasets.lerobot_dataset import (
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-# Make the rlinf package importable regardless of the cwd the user launched from.
-sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from rlinf.data.datasets.recap.utils import (
     decode_image_struct_batch,
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
-from rlinf.data.process.advantage import apply_boolean_label, quantile_threshold
-from rlinf.data.process.distributed import (
-    cleanup_distributed,
-    gather_dataframes_to_rank0,
-    get_shard_indices,
-    setup_distributed,
-)
-from rlinf.data.process.mixture_config import (
-    read_mixture_config,
-    write_mixture_config,
-)
 from rlinf.models.embodiment.value_model.recap.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
+
+
+def setup_distributed(cfg: DictConfig) -> tuple[int, int, str]:
+    """Initialize torch.distributed for torchrun-launched processes.
+
+    Args:
+        cfg: Configuration with distributed settings
+
+    Returns:
+        Tuple of (rank, world_size, device_string)
+    """
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+        dist_cfg = cfg.get("distributed", {})
+        backend = dist_cfg.get("backend", "nccl")
+        timeout_seconds = dist_cfg.get("timeout", 1800)
+
+        if not dist.is_initialized():
+            from datetime import timedelta
+
+            dist.init_process_group(
+                backend=backend,
+                timeout=timedelta(seconds=timeout_seconds),
+            )
+
+        torch.cuda.set_device(local_rank)
+        device = f"cuda:{local_rank}"
+
+        if rank == 0:
+            logger.info(f"Distributed mode enabled: {world_size} GPUs")
+            logger.info(f"  Backend: {backend}, Timeout: {timeout_seconds}s")
+
+        return rank, world_size, device
+
+    # Single GPU fallback
+    return 0, 1, "cuda"
+
+
+def cleanup_distributed():
+    """Clean up distributed process group if initialized."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def get_shard_indices(
+    total_samples: int, rank: int, world_size: int
+) -> tuple[int, int]:
+    """Calculate start/end indices for this rank's shard.
+
+    Distributes samples as evenly as possible, with earlier ranks
+    getting one extra sample if there's a remainder.
+
+    Args:
+        total_samples: Total number of samples
+        rank: Current process rank
+        world_size: Total number of processes
+
+    Returns:
+        Tuple of (start_index, end_index) where end is exclusive
+    """
+    base_count = total_samples // world_size
+    remainder = total_samples % world_size
+
+    if rank < remainder:
+        start = rank * (base_count + 1)
+        end = start + base_count + 1
+    else:
+        start = remainder * (base_count + 1) + (rank - remainder) * base_count
+        end = start + base_count
+
+    return start, end
+
+
+def gather_all_advantages(
+    local_df: pd.DataFrame,
+    rank: int,
+    world_size: int,
+) -> pd.DataFrame:
+    """Gather advantages from all ranks using all_gather_object.
+
+    Args:
+        local_df: Local DataFrame with advantages for this rank's shard
+        rank: Current process rank
+        world_size: Total number of processes
+
+    Returns:
+        Merged DataFrame with all advantages, sorted by (episode_index, frame_index)
+    """
+    if world_size == 1:
+        return local_df
+
+    all_dfs = [None] * world_size
+    dist.all_gather_object(all_dfs, local_df.to_dict("records"))
+
+    all_records = []
+    for df_records in all_dfs:
+        if df_records:
+            all_records.extend(df_records)
+
+    merged_df = pd.DataFrame(all_records)
+    if len(merged_df) > 0:
+        merged_df = merged_df.sort_values(["episode_index", "frame_index"]).reset_index(
+            drop=True
+        )
+
+    return merged_df
 
 
 # Maps LeRobot dataset keys to value model observation format
@@ -118,6 +215,13 @@ KEY_MAPPINGS = {
         "observation.wrist_image_left": "observation/wrist_image_left",
         "observation.joint_position": "observation/joint_position",
         "observation.gripper_position": "observation/gripper_position",
+        "task": "prompt",
+    },
+    "a2d": {
+        "observation.images.top_head": "observation.images.top_head",
+        "observation.images.hand_left": "observation.images.hand_left",
+        "observation.images.hand_right": "observation.images.hand_right",
+        "observation.state": "observation.state",
         "task": "prompt",
     },
 }
@@ -209,10 +313,6 @@ def _parse_value_model_kwargs(cfg: DictConfig) -> dict:
     return {
         "checkpoint_dir": checkpoint_path,
         "env_type": robot_type,
-        # Must match the value model's training-time openpi variant ("pi0" /
-        # "pi05"); it selects the input transforms and quantile normalization.
-        # Dropping it would silently force pi05 and corrupt advantages for a
-        # pi0-trained critic.
         "model_type": data_cfg.get("model_type", "pi05"),
         "num_return_bins": model_cfg.get("num_bins", 201),
         "return_min": model_cfg.get("v_min", -1.0),
@@ -897,10 +997,7 @@ def save_advantages_to_dataset(
         if (dataset_type or "").lower() == "sft":
             save_df["advantage"] = True
         else:
-            # Shared with STEAM (RECAP uses the inclusive `>=` convention).
-            save_df["advantage"] = apply_boolean_label(
-                save_df["advantage_continuous"], threshold, inclusive=True
-            )
+            save_df["advantage"] = save_df["advantage_continuous"] >= threshold
 
         adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
         save_df.to_parquet(meta_dir / adv_filename, index=False)
@@ -914,7 +1011,12 @@ def save_advantages_to_dataset(
         dist.barrier()
 
 
-def compute_advantages(cfg: DictConfig) -> None:
+@hydra.main(
+    version_base=None,
+    config_path="config",
+    config_name="compute_advantages",
+)
+def main(cfg: DictConfig) -> None:
     """Main entry point for advantage computation.
 
     Supports both single-GPU and multi-GPU (via torchrun) execution.
@@ -1049,7 +1151,7 @@ def compute_advantages(cfg: DictConfig) -> None:
 
             if world_size > 1:
                 dist.barrier()
-                df = gather_dataframes_to_rank0(local_df, rank, world_size)
+                df = gather_all_advantages(local_df, rank, world_size)
             else:
                 df = local_df
 
@@ -1074,8 +1176,9 @@ def compute_advantages(cfg: DictConfig) -> None:
 
         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
         combined_advantages = np.concatenate(all_advantages)
-        # Shared with STEAM: same top-fraction quantile rule (rlinf.data.process.advantage).
-        unified_threshold = quantile_threshold(combined_advantages, positive_quantile)
+        unified_threshold = float(
+            np.percentile(combined_advantages, (1 - positive_quantile) * 100)
+        )
 
         if rank == 0:
             logger.info(f"\n{'=' * 60}")
@@ -1119,6 +1222,8 @@ def compute_advantages(cfg: DictConfig) -> None:
             "positive_quantile": positive_quantile,
         }
 
+        import yaml
+
         for ds_path, result in dataset_results.items():
             df = result["df"]
             dataset_type = result["config"].get("type")
@@ -1133,8 +1238,14 @@ def compute_advantages(cfg: DictConfig) -> None:
             )
 
             if rank == 0:
-                # Shared with STEAM: read/write meta/mixture_config.yaml.
-                mixture_config = read_mixture_config(ds_path)
+                mixture_config_path = ds_path / "mixture_config.yaml"
+
+                if mixture_config_path.exists():
+                    with open(mixture_config_path, "r") as f:
+                        mixture_config = yaml.safe_load(f) or {}
+                else:
+                    mixture_config = {}
+
                 mixture_config["global_return_min"] = global_return_min
                 mixture_config["global_return_max"] = global_return_max
                 mixture_config["datasets"] = [
@@ -1148,24 +1259,22 @@ def compute_advantages(cfg: DictConfig) -> None:
                 ]
 
                 if tag:
-                    mixture_config.setdefault("tags", {})[tag] = tag_stats
+                    if "tags" not in mixture_config:
+                        mixture_config["tags"] = {}
+                    mixture_config["tags"][tag] = tag_stats
                 else:
                     mixture_config["unified_threshold"] = unified_threshold
                     mixture_config["positive_quantile"] = positive_quantile
 
-                mix_path = write_mixture_config(ds_path, mixture_config)
-                logger.info(f"  Saved {mix_path}")
+                with open(mixture_config_path, "w") as f:
+                    yaml.dump(mixture_config, f, default_flow_style=False)
+                logger.info(f"  Saved mixture_config.yaml to: {ds_path}")
 
         if rank == 0:
             logger.info("\nAdvantage computation complete!")
 
     finally:
         cleanup_distributed()
-
-
-@hydra.main(version_base=None, config_path=None, config_name="recap_compute_advantages")
-def main(cfg: DictConfig) -> None:
-    compute_advantages(cfg)
 
 
 if __name__ == "__main__":

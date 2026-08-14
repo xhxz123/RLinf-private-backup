@@ -1,0 +1,7 @@
+- advantage.value_checkpoint=/tmp/steam_debug_results/steam_sft/checkpoints/global_step_1/actor
+- data.train_data_paths.0.dataset_path=/root/autodl-tmp/data/steam_debug/sft_data/task_5867
+- data.train_data_paths.1.dataset_path=/root/autodl-tmp/data/steam_debug/rollout_data/task_5867
+- advantage.batch_size=4
+- advantage.num_dataloader_workers_per_gpu=2
+- advantage.prefetch_factor=1
+- advantage.tag=steam_debug_subset

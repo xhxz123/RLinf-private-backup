@@ -477,12 +477,30 @@ def run_inference_for_dataset(
                 dataset_entry.dataset_path,
                 time.monotonic() - first_batch_started_at,
             )
+
+        if rank == 0:
+            print(
+                f"[STEAM_ADV][BATCH_START] dataset={dataset_entry.dataset_path} "
+                f"batch={batch_idx + 1}/{len(loader)}",
+                flush=True,
+            )
+
+        batch_t0 = time.perf_counter()
         observation = move_to_device(batch["observation"], device)
         with torch.inference_mode():
             out = model.predict(observation)
         local_rows.extend(
             records_from_predict(out, batch, num_bins=num_bins, stride_k=stride_k)
         )
+
+        if rank == 0:
+            print(
+                f"[STEAM_ADV][BATCH_END] dataset={dataset_entry.dataset_path} "
+                f"batch={batch_idx + 1}/{len(loader)} "
+                f"elapsed={time.perf_counter() - batch_t0:.2f}s "
+                f"rows={len(local_rows)}",
+                flush=True,
+            )
 
     local_df = pd.DataFrame(local_rows)
     if world_size > 1:

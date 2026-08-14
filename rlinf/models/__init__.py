@@ -116,23 +116,22 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_gr00t_n1d7(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.gr00t import get_model
-
-        return get_model(cfg, torch_dtype)
-
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
         return get_model(cfg, torch_dtype)
 
-    def _build_recap_value_model(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.value_model.recap import get_model
+    #def _build_value_model(cfg: DictConfig, torch_dtype):
+        #from rlinf.models.embodiment.value_model.recap import get_model
 
-        return get_model(cfg, torch_dtype)
+        #return get_model(cfg, torch_dtype)
+    def _build_value_model(cfg: DictConfig, torch_dtype):
+        model_type = getattr(cfg, "model_type", None)
 
-    def _build_steam_value_model(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.value_model.steam import get_model
+        if model_type == "steam_value_model":
+            from rlinf.models.embodiment.value_model.steam import get_model
+        else:
+            from rlinf.models.embodiment.value_model.recap import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -222,25 +221,19 @@ def _register_builtin_models():
     )
     register_model(
         SupportedModel.RECAP_VALUE_MODEL.value,
-        _build_recap_value_model,
+        _build_value_model,
         category="embodied",
         force=True,
     )
     register_model(
         SupportedModel.STEAM_VALUE_MODEL.value,
-        _build_steam_value_model,
+        _build_value_model,
         category="embodied",
         force=True,
     )
     register_model(
         SupportedModel.GR00T_N1D6.value,
         _build_gr00t_n1d6,
-        category="embodied",
-        force=True,
-    )
-    register_model(
-        SupportedModel.GR00T_N1D7.value,
-        _build_gr00t_n1d7,
         category="embodied",
         force=True,
     )
@@ -310,6 +303,13 @@ def get_model(cfg: DictConfig):
         if hasattr(model, "value_head"):
             for param in model.value_head.parameters():
                 param.requires_grad = True
+
+        # Ensure all parameters (including LoRA adapters) are on the same device
+        if (
+            Worker.torch_platform is not None
+            and Worker.torch_platform.is_available()
+        ):
+            model = model.to(Worker.torch_device_type)
 
     return model
 

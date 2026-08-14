@@ -20,6 +20,8 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import StateDictType
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -66,15 +68,6 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        if self.torch_dtype != torch.float32:
-            self._logger.warning(
-                "Provided there is sufficient GPU memory, "
-                "set the actor.model.precision parameter to fp32 "
-                "to allow the optimizer to run in fp32 for better convergence. "
-                "Meanwhile, setting mixed_precision.param_dtype to 16-bit dtype "
-                "can help maximize speed, as it will automatically "
-                "convert fp32 to fp16 during operator execution."
-            )
 
         self.optimizer_steps = 0
         self.critic_warmup_steps = 0
@@ -255,9 +248,14 @@ class FSDPModelManager:
         except Exception as e:
             self._logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
-    def setup_model_and_optimizer(self) -> None:
+    def setup_model_and_optimizer(self, skip_warmup: bool = False) -> None:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
+
+        Args:
+            skip_warmup: If True, skip the warmup_optimizer_state call in
+                build_optimizer. Useful for large models that need to offload
+                to CPU before warmup (e.g., CFG model with CPU offloading).
         """
         module = self.model_provider_func()
 
@@ -290,7 +288,9 @@ class FSDPModelManager:
             model=module, device_mesh=self._device_mesh
         )
         self.optimizer = self.build_optimizer(
-            model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
+            model=self.model,
+            enable_critic_warmup=self.critic_warmup_steps > 0,
+            skip_warmup=skip_warmup,
         )
 
         self.lr_scheduler = self.build_lr_scheduler(
@@ -334,7 +334,33 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
-        if self.is_weight_offloaded:
+        enable_offload = self._cfg.get("enable_offload", False)
+        rest_weight_offload = self.is_weight_offloaded
+
+        if enable_offload:
+            # Model-only resume: load full_weights.pt, skip optimizer.
+            # Optimizer states are re-created on CPU in init_worker.
+            sd_path = os.path.join(load_path, "model_state_dict", "full_weights.pt")
+            if not os.path.exists(sd_path):
+                raise FileNotFoundError(
+                    f"Model weights not found at {sd_path}. "
+                    f"With enable_offload=True, only model weights are restored."
+                )
+            if not rest_weight_offload:
+                self.offload_param_and_grad()
+                self.is_weight_offloaded = True
+            self.load_param_and_grad(self.device)
+            state_dict = torch.load(sd_path, map_location="cpu", weights_only=True)
+            with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
+                self.model.load_state_dict(state_dict)
+            self.offload_param_and_grad()
+            self._logger.info(
+                f"[FSDP] Loaded model weights from {sd_path} "
+                f"(optimizer re-initialized from scratch)."
+            )
+            return
+
+        if rest_weight_offload:
             self.load_param_and_grad(self.device)
             self.is_weight_offloaded = False
         if self.is_optimizer_offloaded:
@@ -353,12 +379,34 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
+        enable_offload = self._cfg.get("enable_offload", False)
         restore_weight_offload = self.is_weight_offloaded
-        restore_optimizer_offload = self.is_optimizer_offloaded
+
+        if enable_offload:
+            # Model-only save: save full_weights.pt only.
+            # DCP requires both model and optimizer on GPU (OOM for large models),
+            # so skip DCP and save model weights with torch.save instead.
+            if restore_weight_offload:
+                self.load_param_and_grad(self.device)
+            state_dict = self._strategy.get_model_state_dict(
+                self.model, cpu_offload=True, full_state_dict=True
+            )
+            if torch.distributed.get_rank() == 0:
+                sd_path = os.path.join(save_path, "model_state_dict")
+                os.makedirs(sd_path, exist_ok=True)
+                torch.save(state_dict, os.path.join(sd_path, "full_weights.pt"))
+            torch.distributed.barrier()
+            if restore_weight_offload:
+                self.offload_param_and_grad()
+            self._logger.info(
+                f"[FSDP] Saved model weights to {save_path} "
+                f"(optimizer state NOT saved — will be re-initialized on resume)."
+            )
+            return
 
         if restore_weight_offload:
             self.load_param_and_grad(self.device)
-        if restore_optimizer_offload:
+        if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
         self._strategy.save_checkpoint(
@@ -373,7 +421,7 @@ class FSDPModelManager:
 
         if restore_weight_offload:
             self.offload_param_and_grad()
-        if restore_optimizer_offload:
+        if self.is_optimizer_offloaded:
             self.offload_optimizer()
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
@@ -484,6 +532,7 @@ class FSDPModelManager:
         self,
         model: Union[nn.Module, FSDPModule, FSDP],
         enable_critic_warmup: bool = False,
+        skip_warmup: bool = False,
     ) -> Optimizer:
         """
         Build the optimizer based on the configuration, currently only support Adam optimizer.
@@ -539,36 +588,18 @@ class FSDPModelManager:
                     "betas": betas,
                 }
             )
-
-        # Fused AdamW avoids a large foreach temp buffer during warmup_optimizer_state
-        # for NO_SHARD models (e.g. STEAM ensemble SFT). It is unsafe with sharded
-        # FSDP params + grad_scaler.step() and can fail at runtime with:
-        # "output with shape [] doesn't match the broadcast shape [1]".
-        all_params = [p for group in param_groups for p in group["params"]]
-        use_fused_adamw = (
-            self._cfg.fsdp_config.get("sharding_strategy", "full_shard") == "no_shard"
-            and Worker.torch_device_type == "cuda"
-            and Worker.torch_platform.is_available()
-            and not any(p.dim() == 0 for p in all_params)
+        optimizer = torch.optim.AdamW(
+            param_groups,
+            eps=adam_eps,
+            weight_decay=weight_decay,
+            fused=False,
         )
-        try:
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                eps=adam_eps,
-                weight_decay=weight_decay,
-                fused=use_fused_adamw,
-            )
-        except (RuntimeError, TypeError):
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                eps=adam_eps,
-                weight_decay=weight_decay,
-            )
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict
         # in save/load_checkpoint calls
-        warmup_optimizer_state(optimizer)
+        if not skip_warmup:
+            warmup_optimizer_state(optimizer)
         return optimizer
 
     def build_optimizers(

@@ -33,7 +33,7 @@ shift 1 2>/dev/null || true
 EXTRA_ARGS="$@"
 
 echo "Using Python at $(which python)"
-LOG_DIR="${REPO_PATH}/logs/value_sft/${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
+LOG_DIR="/root/autodl-tmp/logs/value_sft/${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_value_sft.log"
 mkdir -p "${LOG_DIR}"
 HYDRA_ARGS=("runner.logger.log_path=${LOG_DIR}")

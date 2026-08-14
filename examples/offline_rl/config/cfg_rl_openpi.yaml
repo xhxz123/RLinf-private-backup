@@ -13,11 +13,16 @@ hydra:
   searchpath:
     - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
 
+#cluster:
+  #num_nodes: 1
+  #component_placement:
+    #actor,env,rollout: 0,1,2,3
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
-
+    actor: 0
+    env: 0
+    rollout: 0
 runner:
   task_type: sft
   logger:
@@ -26,20 +31,27 @@ runner:
     experiment_name: "cfg_sft"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 30000
-  max_steps: -1
+  #max_epochs: 30000
+  #max_steps: -1
+  max_epochs: -1
+  max_steps: 10000
   val_check_interval: -1
-  save_interval: 3000
+  save_interval: 1000
+  #resume_dir: null
+  resume_dir: "/root/autodl-tmp/logs/cfg_rl/cfg_rl_openpi-20260811-14:35:27/cfg_sft/checkpoints/global_step_5000"
 
 data:
-  num_workers: 8
-  advantage_tag: null
+  num_workers: 0
+  advantage_tag: steam_k128_bin16_success_ckpt2000_q30
   balance_dataset_weights: true
   seed: 42
 
   train_data_paths:
-    - dataset_path: "/path/to/sft_dataset"
+    - dataset_path: "/root/autodl-tmp/data/sft_data/task_5867"
       type: "sft"
+      weight: 1.0
+    - dataset_path: "/root/autodl-tmp/data/rollout_data/task_5867"
+      type: "rollout"
       weight: 1.0
 
 algorithm:
@@ -48,17 +60,24 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 512
+  micro_batch_size: 8
+  global_batch_size: 64
   seed: 0
+  enable_offload: true
 
   model:
     precision: null
-    model_path: "/path/to/pi05_base_pytorch"
+    #model_path: "/root/autodl-tmp/checkpoint/29999_py"
+    model_path: "/root/autodl-tmp/checkpoint/0801_g01_mix_29999_py/"
     model_type: "cfg_model"
+    num_action_chunks: 32
+    action_dim: 16
+
     add_value_head: False
     openpi:
-      config_name: "pi05_libero"
+      config_name: "pi05_a2d"
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
       cfgrl_guidance_scale: 1.0
       unconditional_prob: 0.1
       train_expert_only: False
@@ -73,15 +92,17 @@ actor:
     weight_decay: 1.0e-10
     clip_grad: 1.0
     lr_scheduler: "cosine"
-    lr_warmup_steps: 5000
-    total_training_steps: 30000
+    #lr_warmup_steps: 5000
+    lr_warmup_steps: 100
+    total_training_steps: 10000
     min_lr: 0.0
 
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
     use_orig_params: False
-    gradient_checkpointing: True
+    gradient_checkpointing: False
+    cpu_offload: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

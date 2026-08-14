@@ -32,6 +32,9 @@ built around:
 
 import logging
 import os
+#后加的
+import time
+
 from pathlib import Path
 from typing import Any
 
@@ -952,12 +955,50 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
             grad_accum = global_bs // micro_bs // self._world_size
             ensemble_size = int(getattr(self.cfg.actor.model, "ensemble_size", 1))
 
+            step = int(getattr(self, "global_step", 0)) + 1
+            max_steps = int(getattr(self.cfg.runner, "max_steps", -1))
+            should_log_step = int(getattr(self, "_rank", 0)) == 0
+
+            if should_log_step:
+                print(
+                    f"[SteamSFT][STEP_START] global_step={step}/{max_steps} "
+                    f"grad_accum={grad_accum} micro_bs={micro_bs} global_bs={global_bs}",
+                    flush=True,
+                )
+
+            step_t0 = time.perf_counter()
             train_metrics = self._run_training_members(grad_accum, ensemble_size)
 
             train_metrics = all_reduce_dict(
                 train_metrics, op=torch.distributed.ReduceOp.AVG
             )
             self.lr_scheduler.step()
+
+            if should_log_step:
+                elapsed = time.perf_counter() - step_t0
+                print(
+                    f"[SteamSFT][STEP_END] global_step={step}/{max_steps} "
+                    f"elapsed={elapsed:.2f}s "
+                    f"loss={float(train_metrics.get('loss', float('nan'))):.4f} "
+                    f"acc={float(train_metrics.get('accuracy', float('nan'))):.4f} "
+                    f"acc_neighbor={float(train_metrics.get('accuracy_neighbor', float('nan'))):.4f} "
+                    f"grad_norm={float(train_metrics.get('grad_norm', float('nan'))):.4f} "
+                    f"lr={float(train_metrics.get('lr', float('nan'))):.6g}",
+                    flush=True,
+                )
+
+            if should_log_step:
+                elapsed = time.perf_counter() - step_t0
+                print(
+                    f"[SteamSFT][STEP_END] global_step={step}/{max_steps} "
+                    f"elapsed={elapsed:.2f}s "
+                    f"loss={float(train_metrics.get('loss', float('nan'))):.4f} "
+                    f"acc={float(train_metrics.get('accuracy', float('nan'))):.4f} "
+                    f"acc_neighbor={float(train_metrics.get('accuracy_neighbor', float('nan'))):.4f} "
+                    f"grad_norm={float(train_metrics.get('grad_norm', float('nan'))):.4f} "
+                    f"lr={float(train_metrics.get('lr', float('nan'))):.6g}",
+                    flush=True,
+                )
 
             if self.cfg.actor.get("enable_offload", False):
                 with self.device_lock:

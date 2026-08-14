@@ -1,0 +1,25 @@
+advantage:
+  value_checkpoint: /tmp/steam_debug_results/steam_sft/checkpoints/global_step_1/actor
+  batch_size: 4
+  num_dataloader_workers_per_gpu: 2
+  prefetch_factor: 1
+  label_mode: quantile
+  rollout_quantile: 0.3
+  expert_quantile: 0.8
+  tag: steam_debug_subset
+  model:
+    precision: bf16
+data:
+  k: 32
+  camera_keys:
+  - observation.images.top_head
+  - observation.images.hand_left
+  - observation.images.hand_right
+  train_data_paths:
+  - dataset_path: /root/autodl-tmp/data/steam_debug/sft_data/task_5867
+    type: sft
+  - dataset_path: /root/autodl-tmp/data/steam_debug/rollout_data/task_5867
+    type: rollout
+distributed:
+  backend: nccl
+  timeout: 3600

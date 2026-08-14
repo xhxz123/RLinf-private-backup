@@ -4,9 +4,9 @@
 data:
   data_root: null
   train_data_paths:
-    - dataset_path: /path/to/sft_dataset
+    - dataset_path: "/root/autodl-tmp/data/sft_data/task_5867"
       type: sft
-    - dataset_path: /path/to/rollout_dataset
+    - dataset_path: "/root/autodl-tmp/data/rollout_data/task_5867"
       type: rollout
 
   dataset_type: "sft"

@@ -33,7 +33,11 @@ from lerobot.common.datasets.lerobot_dataset import (
 from openpi.transforms import DataTransformFn
 from torch.utils.data import Dataset
 
-from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+from rlinf.models.embodiment.openpi.policies import (
+    a2d_policy,
+    franka_policy,
+    libero_policy,
+)
 
 from .common import BaseDataLoaderImpl, ReCapMixtureDataset
 from .utils import (
@@ -76,6 +80,14 @@ _REPACK_KEYS = {
         "observation/wrist_image": "wrist_image",
         "observation/state": "state",
         "actions": "actions",
+        "prompt": "prompt",
+    },
+    "a2d": {
+        "observation.images.top_head": "observation.images.top_head",
+        "observation.images.hand_left": "observation.images.hand_left",
+        "observation.images.hand_right": "observation.images.hand_right",
+        "observation.state": "observation.state",
+        "action": "action",
         "prompt": "prompt",
     },
 }
@@ -280,7 +292,7 @@ class ValueDataset(Dataset):
         self._transform = self._build_transform(
             robot_type=robot_type,
             model_type=model_type,
-            action_dim=action_dim or 32,
+            action_dim=action_dim or 16,
             default_prompt=default_prompt,
         )
         self._tasks = load_task_descriptions(local_path) or (
@@ -324,6 +336,10 @@ class ValueDataset(Dataset):
                     action_dim=action_dim,
                     model_type=model_type_enum,
                 )
+            )
+        elif robot == "a2d":
+            transforms_list.append(
+                a2d_policy.A2DInputs(model_type=model_type_enum)
             )
 
         transforms_list.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))

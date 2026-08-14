@@ -27,34 +27,41 @@ runner:
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
-  max_steps: 16000
+  #max_steps: 16000
+  max_steps: 2000
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: 500
+  resume_dir: "/root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260724-17:12:38/steam_sft/checkpoints/global_step_1000"
 
 data:
   train_data_paths:
-    - dataset_path: "/path/to/sft_dataset"
+    - dataset_path: "/root/autodl-tmp/data/sft_data/task_5867"
       type: sft
-    - dataset_path: "/path/to/rollout_dataset"
+    - dataset_path: "/root/autodl-tmp/data/rollout_data/task_5867"
       type: rollout
 
   balance_weights: true
   seed: 42
   dataset_type: sft
 
-  camera_keys:
-    - observation.images.global
-    - observation.images.right
-    - observation.images.wrist
+  #camera_keys:
+   # - observation.images.global
+   # - observation.images.right
+   # - observation.images.wrist
 
-  k: 32
+  camera_keys:
+    - observation.images.top_head
+    - observation.images.hand_left
+    - observation.images.hand_right
+
+  k: 128
   # false = train on all episodes (success + failure); true = keep only
   # successful episodes (rollout datasets only; sft is always all-success).
-  only_success: false
+  only_success: true
   min_episode_length: null
 
   train_num_workers: 8
-  eval_num_workers: 4
+  eval_num_workers: 2
   prefetch_factor: 4
   persistent_workers: false
   pin_memory: false
@@ -66,20 +73,27 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 512
+  #micro_batch_size: 2
+  #global_batch_size: 16
+  micro_batch_size: 8
+  global_batch_size: 128
   seed: 0
 
   model:
-    precision: bf16
+    #precision: bf16
+    precision: fp32
     fusion_hidden_dim: 512
     dropout: 0.1
     label_smoothing: 0.05
     num_frames_per_pair: 2
-    num_bins: 32
-    vision_repo_id: "/path/to/siglip"
-    language_repo_id: "/path/to/gemma3"
-    tokenizer_path: "/path/to/gemma/tokenizer"
+    num_bins: 16
+    vision_repo_id: "/root/autodl-tmp/siglip-so400m-patch14-384"
+    language_repo_id: "/root/autodl-tmp/gemma-3-270m"
+    tokenizer_path: "/root/autodl-tmp/gemma-3-270m"
+
+    siglip_path: "/root/autodl-tmp/siglip-so400m-patch14-384"
+    gemma3_path: "/root/autodl-tmp/gemma-3-270m"
+
     freeze_vision_encoder: false
     freeze_language_model: false
     include_state_in_prompt: false
@@ -99,8 +113,9 @@ actor:
     weight_decay: 1.0e-5
     clip_grad: 10.0
     lr_scheduler: "constant"
-    lr_warmup_steps: 500
-    total_training_steps: 16000
+    #lr_warmup_steps: 500
+    lr_warmup_steps: 100
+    total_training_steps: 2000
     min_lr: 1.0e-6
 
   fsdp_config:
