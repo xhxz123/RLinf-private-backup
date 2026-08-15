@@ -336,13 +336,13 @@ def records_from_predict(
 
 def build_terminal_frame_rows(
     *,
-    episode_lengths: list[int],
+    episode_lengths: list[tuple[int, int]],
     member_count: int,
 ) -> pd.DataFrame:
     """Build default-neutral rows for each episode's terminal frame."""
     rows: list[dict[str, Any]] = []
     zero_members = [0.0] * max(1, int(member_count))
-    for episode_index, episode_length in enumerate(episode_lengths):
+    for episode_index, episode_length in episode_lengths:
         if int(episode_length) < 1:
             continue
         rows.append(
@@ -367,9 +367,9 @@ def build_terminal_frame_rows(
 
 
 def append_missing_terminal_rows(
-    df: pd.DataFrame,
+    df,
     *,
-    episode_lengths: list[int],
+    episode_lengths: list[tuple[int, int]],
     member_count: int,
 ) -> tuple[pd.DataFrame, int]:
     """Append any missing terminal frames with zero progress defaults."""
@@ -417,12 +417,20 @@ def run_inference_for_dataset(
     device: str,
 ) -> pd.DataFrame:
     """Run ensemble inference on one dataset; return a sorted DataFrame on rank 0."""
+    # dataset = BinaryPairInferenceDataset(
+    #     dataset_path=dataset_entry.dataset_path,
+    #     camera_keys=list(cfg.data.camera_keys),
+    #     k=int(cfg.data.k),
+    #     prompt=cfg.data.get("prompt", None),
+    #     dataset_type=dataset_entry.type,
+    # )
     dataset = BinaryPairInferenceDataset(
         dataset_path=dataset_entry.dataset_path,
         camera_keys=list(cfg.data.camera_keys),
         k=int(cfg.data.k),
         prompt=cfg.data.get("prompt", None),
         dataset_type=dataset_entry.type,
+        exclude_file=dataset_entry.get("exclude_file", None),
     )
 
     collator = BinaryPairDataCollator(
@@ -512,9 +520,13 @@ def run_inference_for_dataset(
     if rank == 0:
         if len(df) > 0:
             df = df.sort_values(["episode_index", "frame_index"]).reset_index(drop=True)
+        # episode_lengths = [
+        #     dataset._source.episode_length(ep)
+        #     for ep in range(dataset._source.num_episodes())
+        # ]
         episode_lengths = [
-            dataset._source.episode_length(ep)
-            for ep in range(dataset._source.num_episodes())
+            (ep, dataset._source.episode_length(ep))
+            for ep in dataset._eligible
         ]
         df, num_appended = append_missing_terminal_rows(
             df,

@@ -46,7 +46,7 @@ from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
-
+from rlinf.data.episode_filter import included_episode_indices
 # Suppress libdav1d/ffmpeg verbose logging
 try:
     import av
@@ -170,6 +170,29 @@ class FSDPCfgWorker(FSDPSftWorker):
             data_path = ds_config["dataset_path"]
             dataset_root = resolve_lerobot_dataset_root(data_path)
             episodes = ds_config.get("episodes")
+            exclude_file = ds_config.get("exclude_file", data_cfg.get("exclude_file", None))
+            if exclude_file is not None:
+                included_episodes, exclusions = included_episode_indices(
+                    dataset_root,
+                    repo_id=Path(data_path).name,
+                    exclusion_file=exclude_file,
+                )
+                if episodes is not None:
+                    included_set = set(included_episodes)
+                    episodes = sorted(set(int(ep) for ep in episodes).intersection(included_set))
+                    if not episodes:
+                        raise ValueError(
+                            f"Episode exclusion removed all requested episodes for {data_path}"
+                        )
+                else:
+                    episodes = included_episodes
+
+                if self._rank == 0:
+                    self.log_info(
+                        f"Applied episode exclusion for {data_path}: "
+                        f"excluded={len(exclusions)}, remaining={len(episodes)}"
+                    )
+
             weight = ds_config.get("weight", 1.0)
 
             dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(

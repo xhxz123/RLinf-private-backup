@@ -405,6 +405,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 num_bins=num_bins,
                 length_scale_enabled=length_scale_enabled,
                 length_scale_percentile=length_scale_percentile,
+                exclude_file=entry.get("exclude_file", data_cfg.get("exclude_file", None)),
             )
 
         balance_dataset_weights = bool(

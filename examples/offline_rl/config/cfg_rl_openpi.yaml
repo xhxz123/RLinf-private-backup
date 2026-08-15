@@ -50,9 +50,17 @@ data:
     - dataset_path: "/root/autodl-tmp/data/sft_data/task_5867"
       type: "sft"
       weight: 1.0
-    - dataset_path: "/root/autodl-tmp/data/rollout_data/task_5867"
+      exclude_file: "/root/autodl-tmp/RLinf/reports/data_quality/task_5867/exclude_a2d.txt"
+
+    - dataset_path: "/root/autodl-tmp/data_new/sft_data/task_5867_203/task_5867"
+      type: "sft"
+      weight: 1.0
+      exclude_file: "/root/autodl-tmp/RLinf/reports/data_quality/task_5867_203/exclude_a2d.txt"
+
+    - dataset_path: "/root/autodl-tmp/data_new/rollout_data/record_dataset_new3"
       type: "rollout"
       weight: 1.0
+      exclude_file: "/root/autodl-tmp/RLinf/reports/data_quality/record_dataset_new3/exclude_a2d.txt"
 
 algorithm:
   adv_type: gae

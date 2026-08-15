@@ -54,6 +54,7 @@ from .binning import (
     _scaled_signed_stride_to_bin,
     _signed_stride_to_bin,
 )
+from rlinf.data.episode_filter import included_episode_indices
 
 logger = logging.getLogger(__name__)
 
@@ -225,12 +226,20 @@ class TrajectorySource:
 class _LeRobotSource(TrajectorySource):
     """LeRobot-backed source with lazy per-frame access."""
 
+    # def __init__(
+    #     self,
+    #     dataset_path: str,
+    #     *,
+    #     only_success: bool = True,
+    #     dataset_type: str,
+    # ) -> None:
     def __init__(
-        self,
-        dataset_path: str,
-        *,
-        only_success: bool = True,
-        dataset_type: str,
+    self,
+    dataset_path: str,
+    *,
+    only_success: bool = True,
+    dataset_type: str,
+    exclude_file: str | None = None,
     ) -> None:
         _isolate_hf_datasets_cache_for_process()
         from lerobot.common.datasets.lerobot_dataset import (
@@ -245,6 +254,25 @@ class _LeRobotSource(TrajectorySource):
 
         local_path = Path(dataset_path).absolute()
         self._dataset_label = str(local_path)
+        self._included_episode_ids: set[int] | None = None
+        self._excluded_episode_ids: set[int] = set()
+
+        if exclude_file is not None:
+            included_episodes, exclusions = included_episode_indices(
+                local_path,
+                repo_id=local_path.name,
+                exclusion_file=exclude_file,
+            )
+            self._included_episode_ids = set(included_episodes)
+            self._excluded_episode_ids = set(exclusions)
+            logger.info(
+                "Applied episode exclusion file %s for %s: kept=%d excluded=%s",
+                exclude_file,
+                local_path,
+                len(included_episodes),
+                sorted(exclusions),
+            )
+        
         self.meta = LeRobotDatasetMetadata(local_path.name, root=local_path)
         self.base = LeRobotDataset(
             local_path.name, root=local_path, download_videos=False
@@ -446,6 +474,8 @@ class _LeRobotSource(TrajectorySource):
         if self._episode_success is None:
             return True
         return bool(self._episode_success[episode])
+    def episode_included(self, episode: int) -> bool:
+        return self._included_episode_ids is None or int(episode) in self._included_episode_ids
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +669,7 @@ class PairDataset(_BasePairDataset):
         length_scale_enabled: bool = False,
         length_scale_percentile: float = 90.0,
         length_scale_reference: Optional[float] = None,
+        exclude_file: Optional[str] = None,
     ) -> None:
         self.camera_keys: tuple[str, ...] = tuple(camera_keys)
         if not self.camera_keys:
@@ -703,10 +734,16 @@ class PairDataset(_BasePairDataset):
             )
         self.only_success = bool(only_success)
 
+        # self._source = _LeRobotSource(
+        #     dataset_path,
+        #     only_success=self.only_success,
+        #     dataset_type=self.dataset_type,
+        # )
         self._source = _LeRobotSource(
             dataset_path,
             only_success=self.only_success,
             dataset_type=self.dataset_type,
+            exclude_file=exclude_file,
         )
 
         # Default floor: any episode with at least 2 frames can form a pair
@@ -716,12 +753,20 @@ class PairDataset(_BasePairDataset):
             min_episode_length = 2
         self._min_episode_length = int(min_episode_length)
         total_eps = self._source.num_episodes()
+        # self._eligible = [
+        #     ep
+        #     for ep in range(total_eps)
+        #     if self._source.episode_length(ep) >= self._min_episode_length
+        #     and (not self.only_success or self._source.episode_is_success(ep))
+        # ]
         self._eligible = [
             ep
             for ep in range(total_eps)
-            if self._source.episode_length(ep) >= self._min_episode_length
+            if self._source.episode_included(ep)
+            and self._source.episode_length(ep) >= self._min_episode_length
             and (not self.only_success or self._source.episode_is_success(ep))
         ]
+
         if not self._eligible:
             raise ValueError(
                 f"No eligible episodes found with length >= {self._min_episode_length} "
@@ -1192,6 +1237,7 @@ class BinaryPairInferenceDataset(_BasePairDataset):
         prompt: Optional[str],
         dataset_type: str,
         min_episode_length: Optional[int] = None,
+        exclude_file: Optional[str] = None,
     ) -> None:
         if dataset_type not in ("sft", "rollout"):
             raise ValueError(
@@ -1212,10 +1258,16 @@ class BinaryPairInferenceDataset(_BasePairDataset):
         # Iterate every episode regardless of is_success; _LeRobotSource with
         # only_success=False skips the success scan and treats all episodes
         # as eligible.
+        # self._source = _LeRobotSource(
+        #     dataset_path,
+        #     only_success=False,
+        #     dataset_type=dataset_type,
+        # )
         self._source = _LeRobotSource(
             dataset_path,
             only_success=False,
             dataset_type=dataset_type,
+            exclude_file=exclude_file,
         )
 
         if min_episode_length is None:
@@ -1223,11 +1275,18 @@ class BinaryPairInferenceDataset(_BasePairDataset):
         self._min_episode_length = int(min_episode_length)
 
         total_eps = self._source.num_episodes()
-        self._eligible: list[int] = [
+        # self._eligible: list[int] = [
+        #     ep
+        #     for ep in range(total_eps)
+        #     if self._source.episode_length(ep) >= self._min_episode_length
+        # ]
+        self._eligible = [
             ep
             for ep in range(total_eps)
-            if self._source.episode_length(ep) >= self._min_episode_length
+            if self._source.episode_included(ep)
+            and self._source.episode_length(ep) >= self._min_episode_length
         ]
+
         if not self._eligible:
             raise ValueError(
                 f"No eligible episodes in {dataset_path!r} with length >= "
@@ -1248,6 +1307,7 @@ class BinaryPairInferenceDataset(_BasePairDataset):
             self.dataset_type,
             self.camera_keys,
         )
+
 
     def __len__(self) -> int:
         return self._num_pair_positions
