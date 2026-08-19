@@ -114,7 +114,10 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_a2d",
         model=pi0_config.Pi0Config(
-            pi05=True, action_dim=16, action_horizon=32, discrete_state_input=False
+            # The deployment config uses a 32-D pi0.5 action head and pads the
+            # 16-D G01 action.  Keep the training architecture identical so
+            # the resulting weights can be loaded by ``pi05_agibot_g01``.
+            pi05=True, action_dim=32, action_horizon=32, discrete_state_input=False
         ),
         data=LeRobotA2DDataConfig(
             repo_id="physical-intelligence/a2d",

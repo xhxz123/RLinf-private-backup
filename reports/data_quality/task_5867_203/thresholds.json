@@ -1,0 +1,11 @@
+{
+  "exclude_max_joint_delta": 0.35,
+  "exclude_max_action_jump": 0.25,
+  "exclude_max_state_jump": 0.25,
+  "review_max_joint_delta": 0.25,
+  "review_max_action_jump": 0.12,
+  "review_max_state_jump": 0.12,
+  "warning_ts_gap_ms": 50.0,
+  "review_ts_gap_ms": 60.0,
+  "moving_duplicate_threshold": 0.01
+}

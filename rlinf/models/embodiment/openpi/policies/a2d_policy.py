@@ -45,7 +45,10 @@ _A2D_ACTION_INDICES = np.array(
     list(range(16, 30)) + [0, 1],
     dtype=np.int32,
 )
-_A2D_ACTION_DIM = 16  # 2 effector + 14 joint positions
+# The fixed ``pi05_agibot_g01`` serving pipeline models joint actions as
+# offsets from the current state, while keeping both grippers absolute.
+A2D_ACTION_DIM = 16
+A2D_JOINT_ACTION_MASK = transforms.make_bool_mask(14, -2)
 
 
 def _extract_state(state: np.ndarray) -> np.ndarray:
@@ -151,5 +154,4 @@ class A2DInputs(transforms.DataTransformFn):
 @dataclasses.dataclass(frozen=True)
 class A2DOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
-        # Model outputs _A2D_ACTION_DIM (16) dims directly
-        return {"actions": np.asarray(data["actions"][..., :_A2D_ACTION_DIM])}
+        return {"actions": np.asarray(data["actions"][..., :A2D_ACTION_DIM])}

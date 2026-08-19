@@ -3,7 +3,8 @@
 #   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble --nproc 4
 
 advantage:
-  value_checkpoint: /root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260727-10:08:46/steam_sft/checkpoints/global_step_2000/actor
+  #value_checkpoint: /root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260727-10:08:46/steam_sft/checkpoints/global_step_2000/actor
+  value_checkpoint: /root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260816-08:29:19/steam_sft/checkpoints/global_step_8000/actor
   #batch_size: 256
   batch_size: 64
   num_dataloader_workers_per_gpu: 4
@@ -11,7 +12,8 @@ advantage:
   label_mode: quantile
   rollout_quantile: 0.3
   expert_quantile: 0.8
-  tag: steam_k128_bin16_success_ckpt2000_q30
+  #tag: steam_k128_bin16_success_ckpt2000_q30
+  tag: steam_k128_bin16_success_ckpt8000_q30
 
   model:
     precision: "bf16"

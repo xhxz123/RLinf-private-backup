@@ -28,11 +28,11 @@ runner:
 
   max_epochs: -1
   #max_steps: 16000
-  max_steps: 5000
+  max_steps: 10000
   val_check_interval: -1
-  save_interval: 1000
-  #resume_dir: "/root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260724-17:12:38/steam_sft/checkpoints/global_step_1000"
-  resume_dir: null
+  save_interval: 2000
+  resume_dir: "/root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260816-01:03:27/steam_sft/checkpoints/global_step_4000"
+  #resume_dir: null
 
 data:
   train_data_paths:
@@ -67,12 +67,12 @@ data:
   only_success: false
   min_episode_length: null
 
-  #train_num_workers: 8
-  #eval_num_workers: 2
-  #prefetch_factor: 4
-  train_num_workers: 0
+  train_num_workers: 4
   eval_num_workers: 0
-  prefetch_factor: null
+  prefetch_factor: 1
+  # train_num_workers: 0
+  # eval_num_workers: 0
+  # prefetch_factor: null
   persistent_workers: false
   pin_memory: false
   do_augment: false

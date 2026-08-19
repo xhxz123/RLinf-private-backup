@@ -13,10 +13,10 @@ hydra:
   searchpath:
     - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
 
-#cluster:
-  #num_nodes: 1
-  #component_placement:
-    #actor,env,rollout: 0,1,2,3
+# cluster:
+#   num_nodes: 1
+#   component_placement:
+#     actor,env,rollout: 0,1,2,3
 cluster:
   num_nodes: 1
   component_placement:
@@ -36,13 +36,15 @@ runner:
   max_epochs: -1
   max_steps: 10000
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: 2000
   #resume_dir: null
-  resume_dir: "/root/autodl-tmp/logs/cfg_rl/cfg_rl_openpi-20260811-14:35:27/cfg_sft/checkpoints/global_step_5000"
+  resume_dir: "/root/autodl-tmp/logs/cfg_rl/cfg_rl_openpi-20260817-21:50:53/cfg_sft/checkpoints/global_step_3000"
 
 data:
-  num_workers: 0
-  advantage_tag: steam_k128_bin16_success_ckpt2000_q30
+  num_workers: 8
+  video_tolerance_s: 0.05
+  #advantage_tag: steam_k128_bin16_success_ckpt2000_q30
+  advantage_tag: steam_k128_bin16_success_ckpt8000_q30
   balance_dataset_weights: true
   seed: 42
 
@@ -72,6 +74,7 @@ actor:
   global_batch_size: 64
   seed: 0
   enable_offload: true
+  #enable_offload: false
 
   model:
     precision: null
@@ -101,13 +104,14 @@ actor:
     clip_grad: 1.0
     lr_scheduler: "cosine"
     #lr_warmup_steps: 5000
-    lr_warmup_steps: 100
+    lr_warmup_steps: 500
     total_training_steps: 10000
     min_lr: 0.0
 
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    #sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     use_orig_params: False
     gradient_checkpointing: False
     cpu_offload: False

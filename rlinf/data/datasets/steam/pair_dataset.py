@@ -278,6 +278,7 @@ class _LeRobotSource(TrajectorySource):
             local_path.name, root=local_path, download_videos=False
         )
         self._only_success = bool(only_success)
+        self.base.tolerance_s = max(float(getattr(self.base, "tolerance_s", 0.0)), 0.04)
         self.dataset_type = dataset_type
 
         eps = self.base.episode_data_index

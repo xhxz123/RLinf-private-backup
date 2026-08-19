@@ -1,0 +1,30 @@
+advantage:
+  value_checkpoint: /root/autodl-tmp/RLinf/logs/steam_sft/steam_value_model_sft-20260816-08:29:19/steam_sft/checkpoints/global_step_8000/sctor
+  batch_size: 64
+  num_dataloader_workers_per_gpu: 4
+  prefetch_factor: 2
+  label_mode: quantile
+  rollout_quantile: 0.3
+  expert_quantile: 0.8
+  tag: steam_k128_bin16_success_ckpt8000_q30
+  model:
+    precision: bf16
+data:
+  k: 128
+  camera_keys:
+  - observation.images.top_head
+  - observation.images.hand_left
+  - observation.images.hand_right
+  train_data_paths:
+  - dataset_path: /root/autodl-tmp/data/sft_data/task_5867
+    type: sft
+    exclude_file: /root/autodl-tmp/RLinf/reports/data_quality/task_5867/exclude_a2d.txt
+  - dataset_path: /root/autodl-tmp/data_new/sft_data/task_5867_203/task_5867
+    type: sft
+    exclude_file: /root/autodl-tmp/RLinf/reports/data_quality/task_5867_203/exclude_a2d.txt
+  - dataset_path: /root/autodl-tmp/data_new/rollout_data/record_dataset_new3
+    type: rollout
+    exclude_file: /root/autodl-tmp/RLinf/reports/data_quality/record_dataset_new3/exclude_a2d.txt
+distributed:
+  backend: nccl
+  timeout: 3600

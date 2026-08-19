@@ -209,6 +209,8 @@ class FSDPCfgWorker(FSDPSftWorker):
                     for key in data_config.action_sequence_keys
                 },
             )
+            base_dataset.tolerance_s = float(data_cfg.get("video_tolerance_s", 0.05))
+
 
             base_dataset.hf_dataset = cast_image_features(base_dataset.hf_dataset)
 

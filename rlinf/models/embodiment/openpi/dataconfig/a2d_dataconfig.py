@@ -35,6 +35,17 @@ class LeRobotA2DDataConfig(DataConfigFactory):
         data_transforms = _transforms.Group(
             inputs=[a2d_policy.A2DInputs(model_type=model_config.model_type)],
             outputs=[a2d_policy.A2DOutputs()],
+        ).push(
+            # Match the immutable ``pi05_agibot_g01`` serving contract:
+            # train joints 0:14 as action - current_state, but leave the two
+            # gripper commands absolute.  During local inference the inverse
+            # transform restores absolute joint targets before A2DOutputs.
+            inputs=[
+                _transforms.DeltaActions(a2d_policy.A2D_JOINT_ACTION_MASK)
+            ],
+            outputs=[
+                _transforms.AbsoluteActions(a2d_policy.A2D_JOINT_ACTION_MASK)
+            ],
         )
 
         model_transforms = ModelTransformFactory(
